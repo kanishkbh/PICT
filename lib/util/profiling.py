@@ -13,15 +13,30 @@ if ENABLE_TENSORFLOW:
 DEFAULT_STATS_MODE = "WELFORD"
 
 
-#https://stackoverflow.com/questions/27779677/how-to-format-elapsed-time-from-seconds-to-hours-minutes-seconds-and-milliseco
 def format_time(t):
-	'''t (float): time in seconds'''
+	'''Format elapsed time from seconds to hh:mm:ss.sss.
+
+	Args:
+		t (float): Time in seconds.
+
+	Returns:
+		str: Formatted time string.
+	'''
+	#https://stackoverflow.com/questions/27779677/how-to-format-elapsed-time-from-seconds-to-hours-minutes-seconds-and-milliseco
 	h, r = divmod(t, 3600)
 	m, s = divmod(r, 60)
 	return '{:02d}:{:02d}:{:06.3f}'.format(int(h), int(m), s)
 
 def time_unit(t, m=1000.):
-	'''t (float): time in seconds'''
+	'''Convert time in seconds to a human-readable unit.
+
+	Args:
+		t (float): Time in seconds.
+		m (float): Threshold for switching units.
+
+	Returns:
+		str: Time with appropriate unit.
+	'''
 	units = ['ns', 'us', 'ms', 's', 'm', 'h', 'd', 'y']
 	x = [1e-9, 1e-6, 1e-3, 1.0, 60.0, 3600.0, 3600.0*24.0, 3600.0*24.0*365.0]
 	for d, u in zip(x, units):
@@ -29,8 +44,19 @@ def time_unit(t, m=1000.):
 			return '{:.3f} {:<2}'.format(t/d, u)
 
 class Profiler:
+	"""Hierarchical code profiler with multiple statistics modes."""
+
 	class Sample:
+		"""Sample node for storing timing statistics as a list."""
+
 		def __init__(self, name, parent, group=None):
+			"""Initialize a Sample.
+
+			Args:
+				name (str): Name of the sample.
+				parent (Sample): Parent sample node.
+				group (str, optional): Group name.
+			"""
 			self.name = name
 			self.parent = parent
 			self.group = group
@@ -38,43 +64,84 @@ class Profiler:
 			self.samples = []
 			self.start = time.time()
 		def add_sample(self, sample):
+			"""Add a timing sample.
+
+			Args:
+				sample (float): Time duration to add.
+			"""
 			self.samples.append(sample)
 		def begin(self):
+			"""Mark the beginning of a timing sample."""
 			self.start = time.time()
 		def end(self):
+			"""Mark the end of a timing sample and record the duration."""
 			self.add_sample(time.time()-self.start)
 		def get_child(self, name, group=None):
+			"""Get or create a child sample node.
+
+			Args:
+				name (str): Child sample name.
+				group (str, optional): Group name.
+
+			Returns:
+				Sample: The child sample node.
+			"""
 			if not name in self.children:
 				self.children[name] = self.__class__(name, self, group=group)
 			return self.children[name]
 		@property
 		def num_samples(self):
+			"""int: Number of samples recorded."""
 			return len(self.samples)
 		def __len__(self):
+			"""Return the number of samples."""
 			return self.num_samples
 		def __getitem__(self, idx):
+			"""Get a sample by index.
+
+			Args:
+				idx (int): Index of the sample.
+
+			Returns:
+				float: The sample value.
+			"""
 			return self.samples[idx]
 		@property
 		def min(self):
+			"""float: Minimum sample value."""
 			return np.amin(self.samples)
 		@property
 		def max(self):
+			"""float: Maximum sample value."""
 			return np.amax(self.samples)
 		@property
 		def mean(self):
+			"""float: Mean of the samples."""
 			return np.mean(self.samples)
 		@property
 		def var(self):
+			"""float: Variance of the samples."""
 			return np.var(self.samples)
 		@property
 		def std(self):
+			"""float: Standard deviation of the samples."""
 			return np.std(self.samples)
 		@property
 		def sum(self):
+			"""float: Sum of the samples."""
 			return np.sum(self.samples)
 	
 	class StreamingSample(Sample):
+		"""Sample node for streaming statistics (mean, var, etc.) without storing all samples."""
+
 		def __init__(self, name, parent, group=None):
+			"""Initialize a StreamingSample.
+
+			Args:
+				name (str): Name of the sample.
+				parent (Sample): Parent sample node.
+				group (str, optional): Group name.
+			"""
 			self._min = np.finfo(np.float64).max
 			self._max = np.finfo(np.float64).min
 			self._sum = np.float64(0)
@@ -84,6 +151,11 @@ class Profiler:
 			super().__init__(name, parent, group=group)
 			del self.samples
 		def add_sample(self, sample):
+			"""Add a timing sample and update streaming statistics.
+
+			Args:
+				sample (float): Time duration to add.
+			"""
 			sample = np.float64(sample)
 			self._min = np.minimum(self._min, sample)
 			self._max = np.maximum(self._max, sample)
@@ -92,41 +164,72 @@ class Profiler:
 			self._num_samples += 1
 			self._last_sample = sample
 		def __getitem__(self, idx):
+			"""Get the last sample value.
+
+			Args:
+				idx (int): Index (-1 for last sample).
+
+			Returns:
+				float: The last sample value.
+
+			Raises:
+				IndexError: If idx is not -1.
+			"""
 			if idx==-1:
 				return self._last_sample
 			else:
 				raise IndexError("StreamingSample only keeps the last sample (idx = -1).")
 		@property
 		def num_samples(self):
+			"""int: Number of samples recorded."""
 			return self._num_samples
 		@property
 		def min(self):
+			"""float: Minimum sample value."""
 			return self._min
 		@property
 		def max(self):
+			"""float: Maximum sample value."""
 			return self._max
 		@property
 		def mean(self):
+			"""float: Mean of the samples."""
 			return np.divide(self._sum, self._num_samples, dtype=np.float64)
 		@property
 		def var(self):
+			"""float: Variance of the samples."""
 			mean = self.mean
 			return (np.divide(self._sum_sq, self._num_samples, dtype=np.float64)) - (mean*mean)
 		@property
 		def std(self):
+			"""float: Standard deviation of the samples."""
 			return np.sqrt(self.var)
 		@property
 		def sum(self):
+			"""float: Sum of the samples."""
 			return self._sum
 	
 	class WelfordOnlineSample(StreamingSample):
-		#https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
+		"""Sample node using Welford's online algorithm for mean and variance."""
+
 		def __init__(self, name, parent, group=None):
+			"""Initialize a WelfordOnlineSample.
+
+			Args:
+				name (str): Name of the sample.
+				parent (Sample): Parent sample node.
+				group (str, optional): Group name.
+			"""
 			super().__init__(name, parent, group=group)
 			del self._sum_sq
 			self._mean = np.float64(0)
 			self._M2 = np.float64(0)
 		def add_sample(self, sample):
+			"""Add a timing sample and update Welford statistics.
+
+			Args:
+				sample (float): Time duration to add.
+			"""
 			sample = np.float64(sample)
 			self._last_sample = sample
 			self._min = np.minimum(self._min, sample)
@@ -140,9 +243,11 @@ class Profiler:
 			self._M2 += delta * (sample - self._mean)
 		@property
 		def mean(self):
+			"""float: Mean of the samples."""
 			return self._mean
 		@property
 		def var(self):
+			"""float: Variance of the samples."""
 			return np.divide(self._M2, self._num_samples, dtype=np.float64)
 	
 	# SAMPLE_TYPES = {
@@ -152,15 +257,23 @@ class Profiler:
 	# }
 	
 	def __init__(self, verbose=False, active=True, stats_mode=DEFAULT_STATS_MODE):
+		"""Initialize the Profiler.
+
+		Args:
+			verbose (bool): Print sample times as they are recorded.
+			active (bool): Enable or disable profiling.
+			stats_mode (str): Statistics mode ('LIST', 'STREAMING', 'WELFORD').
+		"""
 		stats_mode = stats_mode.upper()
 		if stats_mode=="STREAMING":
-			self._root = Profiler.StreamingSample("__root__", None)
+			self._sample_class = Profiler.StreamingSample
 		elif  stats_mode=="LIST":
-			self._root = Profiler.Sample("__root__", None)
+			self._sample_class = Profiler.Sample
 		elif  stats_mode=="WELFORD":
-			self._root = Profiler.WelfordOnlineSample("__root__", None)
+			self._sample_class = Profiler.WelfordOnlineSample
 		else:
 			raise ValueError("Unknown stats_mode '%s'"%stats_mode)
+		self._root = self._sample_class("__root__", None)
 		self._current = self._root
 		self._groups = {}
 		self.verbose = verbose
@@ -168,6 +281,16 @@ class Profiler:
 	
 	@classmethod
 	def from_file(cls, path, verbose=False, active=True):
+		"""Load profiler timings from a file.
+
+		Args:
+			path (str): Path to the file.
+			verbose (bool): Verbose mode.
+			active (bool): Active mode.
+
+		Returns:
+			Profiler: Loaded profiler instance.
+		"""
 		p = cls(verbose, active)
 		with open(path, 'r') as file:
 			t = json.load(path)
@@ -176,9 +299,15 @@ class Profiler:
 	
 	@property
 	def is_active(self):
+		"""bool: Whether the profiler is active."""
 		return self._active
 	
 	def current_sample_path(self):
+		"""Get the current sample path as a string.
+
+		Returns:
+			str: Path of the current sample.
+		"""
 		names = []
 		c = self._current
 		while c!=self._root:
@@ -187,11 +316,24 @@ class Profiler:
 		return "/".join(names[::-1])
 	
 	def _get_group(self, group):
+		"""Get or create a group for grouped timing.
+
+		Args:
+			group (str): Group name.
+
+		Returns:
+			list: [Sample, int] for the group.
+		"""
 		if group not in self._groups:
 			self._groups[group] = [self._root.get_child(group, group=None), 0]
 		return self._groups[group]
 	
 	def _begin_group(self, group):
+		"""Begin timing for a group.
+
+		Args:
+			group (str): Group name.
+		"""
 		if group is None:
 			return
 		grp = self._get_group(group)
@@ -201,6 +343,11 @@ class Profiler:
 		grp[1] += 1
 	
 	def _end_group(self, group):
+		"""End timing for a group.
+
+		Args:
+			group (str): Group name.
+		"""
 		if group is None:
 			return
 		grp = self._get_group(group)
@@ -210,12 +357,23 @@ class Profiler:
 			grp[1] = 0
 	
 	def _begin_sample(self, name, group=None):
+		"""Begin a timing sample.
+
+		Args:
+			name (str): Sample name.
+			group (str, optional): Group name.
+		"""
 		if not self._active: return
 		self._current = self._current.get_child(name, group)
 		self._begin_group(group)
 		self._current.begin()
 	
 	def _end_sample(self, verbose=None):
+		"""End the current timing sample.
+
+		Args:
+			verbose (bool, optional): Print sample time if True.
+		"""
 		if not self._active: return
 		
 		self._current.end()
@@ -227,6 +385,16 @@ class Profiler:
 	
 	@contextmanager
 	def sample(self, name, verbose=None, group=None):
+		"""Context manager for timing a code block.
+
+		Args:
+			name (str): Sample name.
+			verbose (bool, optional): Print sample time if True.
+			group (str, optional): Group name.
+
+		Yields:
+			None
+		"""
 		if self._active:
 			self._begin_sample(name, group=group)
 		try:
@@ -237,6 +405,15 @@ class Profiler:
 	
 	if ENABLE_TENSORFLOW:
 		def begin_gradient_sample(self, x, verbose=None):
+			"""Begin a TensorFlow gradient timing sample.
+
+			Args:
+				x: TensorFlow tensor.
+				verbose (bool, optional): Print sample time if True.
+
+			Returns:
+				TensorFlow tensor with custom gradient.
+			"""
 			@tf.custom_gradient
 			def f(x):
 				#print("REGISTER: end gradient sample")
@@ -248,6 +425,15 @@ class Profiler:
 			return f(x)
 			
 		def end_gradient_sample(self, x, name):
+			"""End a TensorFlow gradient timing sample.
+
+			Args:
+				x: TensorFlow tensor.
+				name (str): Sample name.
+
+			Returns:
+				TensorFlow tensor with custom gradient.
+			"""
 			@tf.custom_gradient
 			def f(x):
 				#print("REGISTER: begin gradient sample: ", name)
@@ -267,6 +453,16 @@ class Profiler:
 	
 	# for formatting
 	def _get_max_depth(self, sample, level, level_indent):
+		"""Get the maximum indentation depth for formatting.
+
+		Args:
+			sample (Sample): Root sample node.
+			level (int): Current level.
+			level_indent (int): Indentation per level.
+
+		Returns:
+			int: Maximum indentation.
+		"""
 		depth = 0
 		for name in sample.children:
 			depth = max(depth, level_indent*level + len(name))
@@ -275,12 +471,32 @@ class Profiler:
 	
 	# for formatting
 	def _get_indent(self, level_indent, max_indent):
+		"""Get the indentation for formatting.
+
+		Args:
+			level_indent (int): Indentation per level.
+			max_indent (int): Maximum allowed indentation.
+
+		Returns:
+			int: Calculated indentation.
+		"""
 		indent = self._get_max_depth(self._root, 0, level_indent)
 		if max_indent<0:
 			return indent
 		return min(max_indent, indent)
 	
 	def _print_stats(self, sample, level, t_parent, t_root, file, level_indent, max_indent):
+		"""Recursively print profiling statistics.
+
+		Args:
+			sample (Sample): Current sample node.
+			level (int): Current level.
+			t_parent (float): Parent total time.
+			t_root (float): Root total time.
+			file: Output file-like object.
+			level_indent (int): Indentation per level.
+			max_indent (int): Maximum indentation.
+		"""
 		t_remaining = t_parent
 		for name, current in sorted(sample.children.items(), key=lambda e: e[1].sum, reverse=True):
 			total_time = current.sum
@@ -299,6 +515,13 @@ class Profiler:
 			file.write('{}: {:>10}, {:10d}, {:>12}, {: 10.05f}, {: 10.05f}\n'.format(s, '-', 0, format_time(t_remaining), 100.*t_remaining/t_parent, 100.*t_remaining/t_root))
 	
 	def stats(self, file=sys.stdout, level_indent=4, max_indent=-1):
+		"""Prints/writes a human-readable, formatted summary of profiling statistics.
+
+		Args:
+			file: Output file-like object.
+			level_indent (int): Indentation per level.
+			max_indent (int): Maximum allowed indentation.
+		"""
 		if self._active:
 			max_indent = self._get_indent(level_indent, max_indent) +2
 			file.write(('{:<'+str(max_indent)+'}: {:^10}| {:^10}| {:^12}| {:^10}| {:^10}| {:^10}| {:^10}| {:^10}|\n').format('Sample name', "average", "# samples", "total", "% parent", "% root", "std", "min", "max"))
@@ -307,10 +530,24 @@ class Profiler:
 			file.write('\nProfiling disabled.\n')
 	
 	def save(self, path):
+		"""Serializes the raw profiling data (as JSON) to a file at the given path.
+		For human-readable save, use `stats()`.
+
+		Args:
+			path (str): Path to the file.
+		"""
 		with open(path, 'w') as file:
 			json.dump(self.timings, path)
 
+	def reset(self):
+		'''Clears all collected samples and resets the profiler to its initial state.'''
+		self._root = self._sample_class("__root__", None)
+		self._current = self._root
+		self._groups = {}
+		print("\n--- Profiler reset ---\n")
+
 if __name__=='__main__':
+	"""Run tests and demonstrations for the Profiler."""
 	#test
 	print("--- Variance stats tests ---")
 	samples_low = [4e-3, 6e-4, 1e-3, 45e-3, 8e-4, 1.605e-3]

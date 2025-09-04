@@ -369,7 +369,56 @@ class Simulation:
            differentiable:bool=False, exclude_advection_solve_gradients:bool=False, exclude_pressure_solve_gradients:bool=False,
            log_dir:str=None, log_interval:int=0, log_images:bool=True, norm_vel:bool=False, block_layout=None, output_mode3D:str="slice", log_fn=None,
            output_resampling_coords=None, output_resampling_shape=None, output_resampling_fill_max_steps=0,
-           save_domain_name:str=None, stop_fn=lambda: False):
+           save_domain_name:str=None, stop_fn=lambda: False
+           ):
+        """
+        Initialize a Simulation object for running PISO-based fluid simulations.
+
+        Parameters:
+            domain (PISOtorch.Domain): The simulation domain (must be prepared with PrepareSolve()).
+            time_step (float): Physical time step size per iteration.
+            substeps (int or str): Number of PISO steps per iteration, or "ADAPTIVE" for adaptive time stepping.
+            corrector_steps (int): Number of corrector steps in the PISO algorithm.
+            density_viscosity (float or None): Deprecated. Use domain scalarViscosity instead.
+            adaptive_CFL (float): CFL condition for adaptive time stepping.
+            prep_fn (dict or None): Dictionary of preparation functions to run at various simulation stages.
+            advection_use_BiCG (bool): Use BiCG solver for advection step.
+            pressure_use_BiCG (bool): Use BiCG solver for pressure step.
+            scipy_solve_advection (bool): Use SciPy solver for advection step.
+            scipy_solve_pressure (bool): Use SciPy solver for pressure step.
+            preconditionBiCG (bool): Use preconditioner for BiCG solver.
+            BiCG_precondition_fallback (bool): Fallback to BiCG without preconditioner if preconditioned solve fails.
+            advection_tol (float or None): Tolerance for advection solver.
+            pressure_tol (float or None): Tolerance for pressure solver.
+            convergence_tol (float or None): Stop simulation if max velocity change per step is below this value.
+            solver_double_fallback (bool): Fallback to double precision if solver fails.
+            advect_non_ortho_steps (int): Number of non-orthogonal advection steps.
+            pressure_non_ortho_steps (int): Number of non-orthogonal pressure steps.
+            normalize_pressure_result (bool): Subtract mean from pressure result for stability.
+            pressure_return_best_result (bool): Return best intermediate result if pressure solver fails to converge.
+            advect_passive_scalar (bool): Advect passive scalar fields.
+            pressure_time_step_normalized (bool): Normalize pressure by time step.
+            velocity_corrector (str): Velocity corrector type ("FD", "FVM_CENTER", "FVM_FACE").
+            non_orthogonal (bool): Use non-orthogonal correction.
+            differentiable (bool): Use differentiable backend (for autodiff).
+            exclude_advection_solve_gradients (bool): Exclude gradients from advection solver.
+            exclude_pressure_solve_gradients (bool): Exclude gradients from pressure solver.
+            log_dir (str or None): Directory for logging and output.
+            log_interval (int): Interval (in iterations) for logging statistics and images.
+            log_images (bool): Save images of the simulation state.
+            norm_vel (bool): Normalize velocity for output visualization.
+            block_layout (list or None): Layout for multi-block output.
+            output_mode3D (str): Output mode for 3D data ("slice", etc.).
+            log_fn (callable or None): Custom logging function.
+            output_resampling_coords: Coordinates for output resampling.
+            output_resampling_shape: Shape for output resampling.
+            output_resampling_fill_max_steps (int): Max steps for filling resampling output.
+            save_domain_name (str or None): Name for saving the domain at the end of the simulation.
+            stop_fn (callable): Function to check for simulation stop condition (e.g., Ctrl-C handler).
+
+        Raises:
+            TypeError, ValueError: If arguments are invalid or domain is not properly initialized.
+        """
         
         self.__LOG = get_logger("PISOsim")
         self.__differentiable = False
@@ -866,14 +915,28 @@ class Simulation:
                             RHS = torch.split(domain.scalarRHS, RHS_single_size)
                             scalarResult = []
                             for channel in range(scalar_channels):
-                                sR, solve_ok = self.linear_solve(matrices[channel], RHS[channel], x=x[channel], use_BiCG=self.advection_use_BiCG, use_scipy=self.scipy_solve_advection, tol=self.advection_tol)
+                                sR, solve_ok = self.linear_solve(
+                                    matrices[channel], 
+                                    RHS[channel], 
+                                    x=x[channel], 
+                                    use_BiCG=self.advection_use_BiCG, 
+                                    use_scipy=self.scipy_solve_advection, 
+                                    tol=self.advection_tol,
+                                )
                                 scalarResult.append(sR)
                             del x
                             del RHS
                             scalarResult = torch.cat(scalarResult)
                         else:
                             x = None if (no_step==0 or not advect_non_ortho_reuse_result) else domain.scalarResult
-                            scalarResult, solve_ok = self.linear_solve(domain.C, domain.scalarRHS, x=x, use_BiCG=self.advection_use_BiCG, use_scipy=self.scipy_solve_advection, tol=self.advection_tol)
+                            scalarResult, solve_ok = self.linear_solve(
+                                domain.C, 
+                                domain.scalarRHS, 
+                                x=x, 
+                                use_BiCG=self.advection_use_BiCG, 
+                                use_scipy=self.scipy_solve_advection, 
+                                tol=self.advection_tol,
+                            )
                             del x
                     
                     domain.setScalarResult(scalarResult)
@@ -934,8 +997,15 @@ class Simulation:
                             
                             with torch.no_grad() if self.exclude_pressure_solve_gradients else nullcontext():
                                 x = None if (pstep==0 or not pressure_reuse_result) else domain.pressureResult
-                                pressureResult, solve_ok = self.linear_solve(domain.P, domain.pressureRHSdiv, x=x, #matrix_rank_deficient=False, residual_reset_step=100,
-                                    use_BiCG=self.pressure_use_BiCG, use_scipy=self.scipy_solve_pressure, tol=self.pressure_tol, return_best_result=self.pressure_return_best_result)
+                                pressureResult, solve_ok = self.linear_solve(
+                                    domain.P, 
+                                    domain.pressureRHSdiv, 
+                                    x=x, #matrix_rank_deficient=False, residual_reset_step=100,
+                                    use_BiCG=self.pressure_use_BiCG, 
+                                    use_scipy=self.scipy_solve_pressure, 
+                                    tol=self.pressure_tol, 
+                                    return_best_result=self.pressure_return_best_result
+                                )
                                 del x
                             
                             if self.normalize_pressure_result:
@@ -1030,13 +1100,27 @@ class Simulation:
                                     RHS = torch.split(domain.scalarRHS, RHS_single_size)
                                     scalarResult = []
                                     for channel in range(scalar_channels):
-                                        sR, solve_ok = self.linear_solve(matrices[channel], RHS[channel], x=None, use_BiCG=self.advection_use_BiCG, use_scipy=self.scipy_solve_advection, tol=self.advection_tol)
+                                        sR, solve_ok = self.linear_solve(
+                                            matrices[channel], 
+                                            RHS[channel], 
+                                            x=None, 
+                                            use_BiCG=self.advection_use_BiCG, 
+                                            use_scipy=self.scipy_solve_advection, 
+                                            tol=self.advection_tol,
+                                        )
                                         scalarResult.append(sR)
                                         del sR
                                     del RHS
                                     scalarResult = torch.cat(scalarResult)
                                 else:
-                                    scalarResult, solve_ok = self.linear_solve(domain.C, domain.scalarRHS, x=None, use_BiCG=self.advection_use_BiCG, use_scipy=self.scipy_solve_advection, tol=self.advection_tol)
+                                    scalarResult, solve_ok = self.linear_solve(
+                                        domain.C, 
+                                        domain.scalarRHS, 
+                                        x=None, 
+                                        use_BiCG=self.advection_use_BiCG, 
+                                        use_scipy=self.scipy_solve_advection, 
+                                        tol=self.advection_tol,
+                                    )
                             
                             domain.setScalarResult(scalarResult)
                             domain.UpdateDomainData()
@@ -1058,14 +1142,28 @@ class Simulation:
                                         RHS = torch.split(domain.scalarRHS, RHS_single_size)
                                         scalarResult = []
                                         for channel in range(scalar_channels):
-                                            sR, solve_ok = self.linear_solve(matrices[channel], RHS[channel], x=x[channel], use_BiCG=self.advection_use_BiCG, use_scipy=self.scipy_solve_advection, tol=self.advection_tol)
+                                            sR, solve_ok = self.linear_solve(
+                                                matrices[channel], 
+                                                RHS[channel], 
+                                                x=x[channel], 
+                                                use_BiCG=self.advection_use_BiCG, 
+                                                use_scipy=self.scipy_solve_advection, 
+                                                tol=self.advection_tol
+                                            )
                                             scalarResult.append(sR)
                                         del x
                                         del RHS
                                         scalarResult = torch.cat(scalarResult)
                                     else:
                                         x = None if (no_step==0 or not advect_non_ortho_reuse_result) else domain.scalarResult
-                                        scalarResult, solve_ok = self.linear_solve(domain.C, domain.scalarRHS, x=x, use_BiCG=self.advection_use_BiCG, use_scipy=self.scipy_solve_advection, tol=self.advection_tol)
+                                        scalarResult, solve_ok = self.linear_solve(
+                                            domain.C, 
+                                            domain.scalarRHS, 
+                                            x=x, 
+                                            use_BiCG=self.advection_use_BiCG, 
+                                            use_scipy=self.scipy_solve_advection, 
+                                            tol=self.advection_tol
+                                        )
                                     del x
                                 
                                 domain.setScalarResult(scalarResult)
@@ -1100,7 +1198,14 @@ class Simulation:
                         
                         with torch.no_grad() if self.exclude_advection_solve_gradients else nullcontext():
                             x = None if (not advect_use_prev_result) else domain.velocityResult
-                            velocityResult, solve_ok = self.linear_solve(domain.C, domain.velocityRHS, x=x, use_BiCG=self.advection_use_BiCG, use_scipy=self.scipy_solve_advection, tol=self.advection_tol)
+                            velocityResult, solve_ok = self.linear_solve(
+                                domain.C, 
+                                domain.velocityRHS, 
+                                x=x, 
+                                use_BiCG=self.advection_use_BiCG, 
+                                use_scipy=self.scipy_solve_advection, 
+                                tol=self.advection_tol
+                            )
                             del x
                         
                         domain.setVelocityResult(velocityResult)
@@ -1116,7 +1221,14 @@ class Simulation:
                             
                             with torch.no_grad() if self.exclude_advection_solve_gradients else nullcontext():
                                 x = None if (no_step==0 or not advect_non_ortho_reuse_result) else domain.velocityResult
-                                velocityResult, solve_ok = self.linear_solve(domain.C, domain.velocityRHS, x=x, use_BiCG=self.advection_use_BiCG, use_scipy=self.scipy_solve_advection, tol=self.advection_tol)
+                                velocityResult, solve_ok = self.linear_solve(
+                                    domain.C, 
+                                    domain.velocityRHS, 
+                                    x=x, 
+                                    use_BiCG=self.advection_use_BiCG, 
+                                    use_scipy=self.scipy_solve_advection, 
+                                    tol=self.advection_tol
+                                )
                                 del x
                             
                             domain.setVelocityResult(velocityResult)
@@ -1147,8 +1259,15 @@ class Simulation:
                             self._run_prep_fn("POST_PRESSURE_SETUP", domain=domain, local_step=step, time_step=time_step, total_step=self.total_step)
                             
                             with torch.no_grad() if self.exclude_pressure_solve_gradients else nullcontext():
-                                pressureResult, solve_ok = self.linear_solve(domain.P, domain.pressureRHSdiv, x=None, #matrix_rank_deficient=False, residual_reset_step=100,
-                                    use_BiCG=self.pressure_use_BiCG, use_scipy=self.scipy_solve_pressure, tol=self.pressure_tol, return_best_result=self.pressure_return_best_result)
+                                pressureResult, solve_ok = self.linear_solve(
+                                    domain.P, 
+                                    domain.pressureRHSdiv, 
+                                    x=None, #matrix_rank_deficient=False, residual_reset_step=100,
+                                    use_BiCG=self.pressure_use_BiCG, 
+                                    use_scipy=self.scipy_solve_pressure, 
+                                    tol=self.pressure_tol,
+                                    return_best_result=self.pressure_return_best_result
+                                )
                             
                             if not solve_ok:
                                 return solve_ok
@@ -1178,21 +1297,34 @@ class Simulation:
                                 with torch.no_grad() if self.exclude_pressure_solve_gradients else nullcontext():
                                     #_LOG.info("Start pressure solve #%d", cstep)
                                     x = None if (pstep==0 or not pressure_reuse_result) else domain.pressureResult
+
                                     if pressure_dp:
                                         self.__LOG.info("Pressure solve is double precision.")
                                         P = domain.P.toType(torch.float64)
                                         pressureRHSdiv = domain.pressureRHSdiv.to(torch.float64)
                                         if x is not None: x = x.to(torch.float64)
-                                        pressureResult, solve_ok = self.linear_solve(P, pressureRHSdiv, x=x,
-                                            use_BiCG=self.pressure_use_BiCG, use_scipy=self.scipy_solve_pressure, tol=self.pressure_tol,
-                                            return_best_result=self.pressure_return_best_result) #, x=domain.pressureResult
+                                        pressureResult, solve_ok = self.linear_solve(
+                                            P, 
+                                            pressureRHSdiv, 
+                                            x=x,
+                                            use_BiCG=self.pressure_use_BiCG, 
+                                            use_scipy=self.scipy_solve_pressure, 
+                                            tol=self.pressure_tol,
+                                            return_best_result=self.pressure_return_best_result
+                                        ) #, x=domain.pressureResult
                                         pressureResult = pressureResult.to(domain.pressureRHSdiv.dtype)
                                         del P
                                         del pressureRHSdiv
                                     else:
-                                        pressureResult, solve_ok = self.linear_solve(domain.P, domain.pressureRHSdiv, x=x, #matrix_rank_deficient=False, residual_reset_step=100,
-                                            use_BiCG=self.pressure_use_BiCG, use_scipy=self.scipy_solve_pressure, tol=self.pressure_tol,
-                                            return_best_result=self.pressure_return_best_result)
+                                        pressureResult, solve_ok = self.linear_solve(
+                                            domain.P, 
+                                            domain.pressureRHSdiv, 
+                                            x=x, #matrix_rank_deficient=False, residual_reset_step=100,
+                                            use_BiCG=self.pressure_use_BiCG, 
+                                            use_scipy=self.scipy_solve_pressure, 
+                                            tol=self.pressure_tol,
+                                            return_best_result=self.pressure_return_best_result
+                                        )
                                     del x
                                 #solve_ok = True #DEBUG
                                 
@@ -1276,7 +1408,10 @@ class Simulation:
                     self.__LOG.info("Adaptive step %d substeps: %d. From CFL = %.02f, max vel = %.03e, time step = %.03e.", substep,
                         substeps, CFL_cond, max_vel_np, time_step_target)
                 
-                sim_ok = self._PISO_split_step(iterations=1, time_step=ts)
+                sim_ok = self._PISO_split_step(
+                    iterations=1, 
+                    time_step=ts
+                )
                 substep += 1
                 
                 if not sim_ok or self._check_stop():
@@ -1285,7 +1420,6 @@ class Simulation:
         return True
     
     def run(self, iterations, static=False, log_domain=True):
-        self._check_domain()
         # time_step: physical time to pass per iteration and substep
         # substeps: how many piso steps to make per iteration
         # corrector_steps: number of corrector steps in the PISO algorithm
@@ -1296,6 +1430,7 @@ class Simulation:
         # - pressure_tol: tolerance for pressure CG convergence (residual)
         # - convergence_tol: tolerance for simulation convergence (difference between consecutive steps)
         
+        self._check_domain()
         domain = self.domain
 
         if self.log_interval>0 and self.log_images and self.log_dir is None:
@@ -1310,7 +1445,7 @@ class Simulation:
         if domain_orientation==0:
             self.__LOG.warning("Domain coordinate systems have mixed orientation. This can lead to issues with the simulation.")
         domain_flux_balance = domain.GetBoundaryFluxBalance()
-        if ntonp(torch.abs(domain_flux_balance))>ntonp(self.pressure_tol):
+        if ntonp(torch.abs(domain_flux_balance)) > ntonp(self.pressure_tol):
             self.__LOG.warning("Domain boundary is not divergence free (flux balance: %.03e). This can prevent pressure solve convergence.", domain_flux_balance)
             return False
         #self.__LOG.info("Domain handedness %d, boundary flux balance: %s", domain_orientation, domain_flux_balance.cpu().numpy())
@@ -1367,11 +1502,16 @@ class Simulation:
                     with SAMPLE("simIt"):
                         try:
                             if static:
-                                sim_ok = self.advect_static(iterations=substeps, time_step=time_step)
+                                sim_ok = self.advect_static(iterations=substeps, 
+                                                            time_step=time_step, 
+                                                            )
                             elif adaptive_step:
                                 sim_ok = self._PISO_adaptive_step()
                             else:
-                                sim_ok = self._PISO_split_step(iterations=substeps, time_step=time_step)
+                                sim_ok = self._PISO_split_step(
+                                    iterations=substeps, 
+                                    time_step=time_step
+                                )
                             # if not sim_ok:
                                 # break
                         except PISOtorch_diff.LinsolveError as e:
